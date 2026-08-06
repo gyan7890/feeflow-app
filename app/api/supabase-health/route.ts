@@ -13,12 +13,16 @@ const requiredTables = [
 ];
 
 function getSupabaseConfig() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+  const url =
+    process.env.NEXT_PUBLIC_SUPABASE_URL ||
+    process.env.SUPABASE_URL ||
+    "https://hpkfsuvxafcctdmkooup.supabase.co";
 
-  if (!url || !key) {
-    return { error: "Supabase environment variables are missing." };
-  }
+  const key =
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    "sb_publishable_pj1JvuR1OhzTpQgipH5AsQ_apaIw7uZ";
 
   return { url, key };
 }
