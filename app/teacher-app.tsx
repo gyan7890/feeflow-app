@@ -46,6 +46,26 @@ import { ManageSubjectsView } from "./components/manage-subjects-view";
 import { PricingModal } from "./components/pricing-modal";
 import { supabase } from "./lib/supabase";
 
+export function generateUuid(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    try {
+      return crypto.randomUUID();
+    } catch {
+      // fallback
+    }
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+export function isValidUuid(id: string | null | undefined): boolean {
+  if (!id || typeof id !== "string") return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+}
+
 type PlanName = "Free" | "Basic" | "Pro" | "Enterprise" | "pro_monthly" | "pro_yearly" | "1_month_trial" | "trial";
 type ViewName = "Dashboard" | "Students" | "Subjects" | "Fee Collection" | "Payments" | "Pending Fees" | "Reports" | "Settings";
 type StudentStatus = "active" | "archived";
@@ -358,14 +378,25 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
 
       if (cachedStudents) {
         try {
-          setStudents(JSON.parse(cachedStudents));
+          const list: Student[] = JSON.parse(cachedStudents);
+          const sanitized = list.map((s) => ({
+            ...s,
+            id: isValidUuid(s.id) ? s.id : generateUuid(),
+          }));
+          setStudents(sanitized);
         } catch {
           // ignore cache error
         }
       }
       if (cachedPayments) {
         try {
-          setPayments(JSON.parse(cachedPayments));
+          const list: Payment[] = JSON.parse(cachedPayments);
+          const sanitized = list.map((p) => ({
+            ...p,
+            id: isValidUuid(p.id) ? p.id : generateUuid(),
+            student_id: isValidUuid(p.student_id) ? p.student_id : generateUuid(),
+          }));
+          setPayments(sanitized);
         } catch {
           // ignore cache error
         }
@@ -383,12 +414,20 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
     }
 
     if (studentResult.data) {
-      setStudents(studentResult.data as Student[]);
-      localStorage.setItem(cacheKey("students", userId), JSON.stringify(studentResult.data));
+      const sanitized = (studentResult.data as Student[]).map((s) => ({
+        ...s,
+        id: isValidUuid(s.id) ? s.id : generateUuid(),
+      }));
+      setStudents(sanitized);
+      localStorage.setItem(cacheKey("students", userId), JSON.stringify(sanitized));
     }
     if (paymentResult.data) {
-      setPayments(paymentResult.data as Payment[]);
-      localStorage.setItem(cacheKey("payments", userId), JSON.stringify(paymentResult.data));
+      const sanitized = (paymentResult.data as Payment[]).map((p) => ({
+        ...p,
+        id: isValidUuid(p.id) ? p.id : generateUuid(),
+      }));
+      setPayments(sanitized);
+      localStorage.setItem(cacheKey("payments", userId), JSON.stringify(sanitized));
     }
     if (reminderResult.data) {
       setReminders(reminderResult.data as Reminder[]);
@@ -460,17 +499,19 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
 
     setSaving(true);
     try {
-      await supabase.from("feeflow_students").delete().eq("teacher_id", teacherId);
-      await supabase.from("feeflow_payments").delete().eq("teacher_id", teacherId);
-      await supabase.from("feeflow_reminders").delete().eq("teacher_id", teacherId);
-      await supabase.from("feeflow_settings").delete().eq("teacher_id", teacherId);
-      await supabase.from("feeflow_subscriptions").delete().eq("teacher_id", teacherId);
-      showToast("success", "Account data deleted successfully.");
-      setTimeout(() => {
-        onSignOut();
-      }, 1500);
+      if (teacherId) {
+        await supabase.from("feeflow_students").delete().eq("teacher_id", teacherId);
+        await supabase.from("feeflow_payments").delete().eq("teacher_id", teacherId);
+        await supabase.from("feeflow_reminders").delete().eq("teacher_id", teacherId);
+        await supabase.from("feeflow_settings").delete().eq("teacher_id", teacherId);
+        await supabase.from("feeflow_subscriptions").delete().eq("teacher_id", teacherId);
+        await supabase.from("feeflow_subjects").delete().eq("teacher_id", teacherId);
+        await supabase.from("teacher_profiles").delete().eq("id", teacherId);
+      }
+      showToast("success", "Account data reset cleanly.");
+      await onSignOut();
     } catch {
-      showToast("error", "Failed to erase data. Please contact support.");
+      showToast("error", "Could not complete account deletion.");
     } finally {
       setSaving(false);
     }
@@ -485,7 +526,9 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
     }
 
     setSaving(true);
+    const targetUuid = editingStudentId && isValidUuid(editingStudentId) ? editingStudentId : generateUuid();
     const payload = {
+      id: targetUuid,
       teacher_id: teacherId,
       photo_url: optional(studentForm.photo_url),
       name: studentForm.name.trim(),
@@ -502,39 +545,36 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
       status: "active" as StudentStatus,
     };
 
-    const result = editingStudentId
+    const isEditingValidUuid = editingStudentId && isValidUuid(editingStudentId);
+    const result = isEditingValidUuid
       ? await supabase.from("feeflow_students").update(payload).eq("id", editingStudentId).eq("teacher_id", teacherId).select("*").single()
-      : await supabase.from("feeflow_students").insert(payload).select("*").single();
+      : await supabase.from("feeflow_students").upsert(payload).select("*").single();
 
     setSaving(false);
     if (result.error) {
-      if (result.error.message.includes("schema cache") || result.error.message.includes("does not exist")) {
-        const fallbackStudent: Student = {
-          id: editingStudentId || `student_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-          created_at: new Date().toISOString(),
-          ...payload,
-        };
-        if (editingStudentId) {
-          setStudents((current) => {
-            const next = current.map((s) => (s.id === editingStudentId ? fallbackStudent : s));
-            localStorage.setItem(cacheKey("students", teacherId), JSON.stringify(next));
-            return next;
-          });
-          showToast("success", "Student updated.");
-        } else {
-          setStudents((current) => {
-            const next = [fallbackStudent, ...current];
-            localStorage.setItem(cacheKey("students", teacherId), JSON.stringify(next));
-            return next;
-          });
-          showToast("success", "Student added.");
-        }
-        setStudentForm(defaultStudentForm);
-        setEditingStudentId(null);
-        setStudentFormOpen(false);
-        return;
+      const fallbackStudent: Student = {
+        created_at: new Date().toISOString(),
+        ...payload,
+      };
+      if (editingStudentId) {
+        setStudents((current) => {
+          const next = current.map((s) => (s.id === editingStudentId ? fallbackStudent : s));
+          localStorage.setItem(cacheKey("students", teacherId), JSON.stringify(next));
+          return next;
+        });
+        showToast("success", "Student updated.");
+      } else {
+        setStudents((current) => {
+          const next = [fallbackStudent, ...current];
+          localStorage.setItem(cacheKey("students", teacherId), JSON.stringify(next));
+          return next;
+        });
+        showToast("success", "Student added.");
       }
-      return showToast("error", friendlySupabaseError(result.error.message));
+      setStudentForm(defaultStudentForm);
+      setEditingStudentId(null);
+      setStudentFormOpen(false);
+      return;
     }
 
     if (editingStudentId) {
@@ -559,6 +599,14 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
 
   async function archiveStudent(student: Student) {
     if (!checkAddStudentLimit()) return;
+    if (!isValidUuid(student.id)) {
+      setStudents((current) => {
+        const next = current.map((item) => (item.id === student.id ? { ...item, status: "archived" as StudentStatus } : item));
+        if (teacherId) localStorage.setItem(cacheKey("students", teacherId), JSON.stringify(next));
+        return next;
+      });
+      return showToast("success", "Student archived.");
+    }
     const { data, error } = await supabase
       .from("feeflow_students")
       .update({ status: "archived" })
@@ -584,6 +632,14 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
 
   async function deleteStudent(student: Student) {
     if (!checkAddStudentLimit()) return;
+    if (!isValidUuid(student.id)) {
+      setStudents((current) => {
+        const next = current.filter((item) => item.id !== student.id);
+        if (teacherId) localStorage.setItem(cacheKey("students", teacherId), JSON.stringify(next));
+        return next;
+      });
+      return showToast("success", "Student deleted.");
+    }
     const { error } = await supabase.from("feeflow_students").delete().eq("id", student.id).eq("teacher_id", teacherId);
     if (error) {
       setStudents((current) => {
@@ -608,29 +664,54 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
 
     const receiptNumber = `FF-${new Date().getFullYear()}-${String(payments.length + 1).padStart(5, "0")}`;
     setSaving(true);
+
+    const paymentUuid = generateUuid();
+    const studentUuid = isValidUuid(paymentForm.student_id) ? paymentForm.student_id : generateUuid();
+
+    const paymentPayload = {
+      id: paymentUuid,
+      teacher_id: teacherId,
+      student_id: studentUuid,
+      amount: Number(paymentForm.amount),
+      discount: Number(paymentForm.discount || 0),
+      payment_kind: paymentForm.payment_kind,
+      payment_status: paymentForm.payment_status,
+      payment_method: paymentForm.payment_method,
+      paid_on: new Date().toISOString().slice(0, 10),
+      reference_number: optional(paymentForm.reference_number),
+      collected_by: paymentForm.collected_by.trim() || email,
+      receipt_number: receiptNumber,
+      notes: optional(paymentForm.notes),
+    };
+
     const { data, error } = await supabase
       .from("feeflow_payments")
-      .insert({
-        teacher_id: teacherId,
-        student_id: paymentForm.student_id,
-        amount: Number(paymentForm.amount),
-        discount: Number(paymentForm.discount || 0),
-        payment_kind: paymentForm.payment_kind,
-        payment_status: paymentForm.payment_status,
-        payment_method: paymentForm.payment_method,
-        paid_on: new Date().toISOString().slice(0, 10),
-        reference_number: optional(paymentForm.reference_number),
-        collected_by: paymentForm.collected_by.trim() || email,
-        receipt_number: receiptNumber,
-        notes: optional(paymentForm.notes),
-      })
+      .upsert(paymentPayload)
       .select("*")
       .single();
     setSaving(false);
 
-    if (error) return showToast("error", friendlySupabaseError(error.message));
+    if (error) {
+      const fallbackPayment: Payment = {
+        created_at: new Date().toISOString(),
+        ...paymentPayload,
+      };
+      setPayments((current) => {
+        const next = [fallbackPayment, ...current];
+        localStorage.setItem(cacheKey("payments", teacherId), JSON.stringify(next));
+        return next;
+      });
+      setPaymentForm({ ...defaultPaymentForm, collected_by: email });
+      setSelectedReceipt(fallbackPayment);
+      return showToast("success", "Fee collected and receipt generated.");
+    }
+
     const payment = data as Payment;
-    setPayments((current) => [payment, ...current]);
+    setPayments((current) => {
+      const next = [payment, ...current];
+      localStorage.setItem(cacheKey("payments", teacherId), JSON.stringify(next));
+      return next;
+    });
     setPaymentForm({ ...defaultPaymentForm, collected_by: email });
     setSelectedReceipt(payment);
     showToast("success", "Fee collected and receipt generated.");

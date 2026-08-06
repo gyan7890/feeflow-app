@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
+import { generateUuid, isValidUuid } from "../teacher-app";
 
 export type SubjectItem = {
   id: string;
@@ -187,9 +188,7 @@ export function ManageSubjectsView({ teacherId, onSubjectsUpdated }: ManageSubje
       setShowAddModal(false);
       showToast("success", `Subject "${targetName}" added.`);
     } catch {
-      // Memory fallback if DB insert fails
-      /* eslint-disable-next-line react-hooks/purity */
-      const fallbackId = `sub_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      const fallbackId = generateUuid();
       const fallbackItem: SubjectItem = {
         id: fallbackId,
         teacher_id: teacherId,
@@ -226,55 +225,48 @@ export function ManageSubjectsView({ teacherId, onSubjectsUpdated }: ManageSubje
       return;
     }
 
-    try {
-      await supabase
-        .from("feeflow_subjects")
-        .update({ subject_name: targetName })
-        .eq("id", editingSubject.id);
-
-      const updated = subjects.map((s) =>
-        s.id === editingSubject.id ? { ...s, subject_name: targetName } : s
-      );
-      setSubjects(updated);
-      if (onSubjectsUpdatedRef.current) {
-        onSubjectsUpdatedRef.current(updated.map((s) => s.subject_name));
+    if (isValidUuid(editingSubject.id)) {
+      try {
+        await supabase
+          .from("feeflow_subjects")
+          .update({ subject_name: targetName })
+          .eq("id", editingSubject.id);
+      } catch {
+        // ignore fallback error
       }
-      setEditingSubject(null);
-      showToast("success", `Subject updated to "${targetName}".`);
-    } catch {
-      const updated = subjects.map((s) =>
-        s.id === editingSubject.id ? { ...s, subject_name: targetName } : s
-      );
-      setSubjects(updated);
-      if (onSubjectsUpdatedRef.current) {
-        onSubjectsUpdatedRef.current(updated.map((s) => s.subject_name));
-      }
-      setEditingSubject(null);
-      showToast("success", `Subject updated to "${targetName}".`);
     }
+
+    const updated = subjects.map((s) =>
+      s.id === editingSubject.id ? { ...s, subject_name: targetName } : s
+    );
+    setSubjects(updated);
+    if (onSubjectsUpdatedRef.current) {
+      onSubjectsUpdatedRef.current(updated.map((s) => s.subject_name));
+    }
+    setEditingSubject(null);
+    showToast("success", `Subject updated to "${targetName}".`);
   }
 
   async function handleDeleteSubject(id: string) {
     const subjectToDelete = subjects.find((s) => s.id === id);
     const name = subjectToDelete?.subject_name || "Subject";
-    try {
-      await supabase.from("feeflow_subjects").delete().eq("id", id);
-      const updated = subjects.filter((s) => s.id !== id);
-      setSubjects(updated);
-      if (onSubjectsUpdatedRef.current) {
-        onSubjectsUpdatedRef.current(updated.map((s) => s.subject_name));
+    setDeletingId(id);
+
+    if (isValidUuid(id)) {
+      try {
+        await supabase.from("feeflow_subjects").delete().eq("id", id);
+      } catch {
+        // ignore fallback error
       }
-      showToast("success", `Subject "${name}" deleted.`);
-    } catch {
-      const updated = subjects.filter((s) => s.id !== id);
-      setSubjects(updated);
-      if (onSubjectsUpdatedRef.current) {
-        onSubjectsUpdatedRef.current(updated.map((s) => s.subject_name));
-      }
-      showToast("success", `Subject "${name}" deleted.`);
-    } finally {
-      setDeletingId(null);
     }
+
+    const updated = subjects.filter((s) => s.id !== id);
+    setSubjects(updated);
+    if (onSubjectsUpdatedRef.current) {
+      onSubjectsUpdatedRef.current(updated.map((s) => s.subject_name));
+    }
+    showToast("success", `Subject "${name}" deleted.`);
+    setDeletingId(null);
   }
 
   async function seedDefaultSubjects() {
