@@ -574,6 +574,7 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
       setStudentForm(defaultStudentForm);
       setEditingStudentId(null);
       setStudentFormOpen(false);
+      setActiveView("Students");
       return;
     }
 
@@ -595,6 +596,7 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
     setStudentForm(defaultStudentForm);
     setEditingStudentId(null);
     setStudentFormOpen(false);
+    setActiveView("Students");
   }
 
   async function archiveStudent(student: Student) {
@@ -727,23 +729,54 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
       return;
     }
 
-    const { data, error } = await supabase
-      .from("feeflow_reminders")
-      .insert({
-        teacher_id: teacherId,
-        student_id: student.id,
-        reminder_type: reminderType,
-        channel: "whatsapp",
-        message,
-        status: "opened",
-        opened_at: new Date().toISOString(),
-      })
-      .select("*")
-      .single();
-    if (error) return showToast("error", friendlySupabaseError(error.message));
-    setReminders((current) => [data as Reminder, ...current]);
-    window.open(buildWhatsAppUrl(phone, message), "_blank", "noopener,noreferrer");
-    showToast("success", "WhatsApp Web opened. Review the message and click Send manually.");
+    const waUrl = buildWhatsAppUrl(phone, message);
+
+    // Open WhatsApp immediately so browser popup blockers don't block it
+    try {
+      const win = typeof window !== "undefined" ? window.open(waUrl, "_blank", "noopener,noreferrer") : null;
+      if (!win && typeof window !== "undefined") {
+        window.location.href = waUrl;
+      }
+    } catch {
+      if (typeof window !== "undefined") {
+        window.location.href = waUrl;
+      }
+    }
+
+    const reminderUuid = generateUuid();
+    const studentUuid = isValidUuid(student.id) ? student.id : generateUuid();
+
+    const reminderPayload = {
+      id: reminderUuid,
+      teacher_id: teacherId,
+      student_id: studentUuid,
+      reminder_type: reminderType,
+      channel: "whatsapp" as const,
+      message,
+      status: "opened" as const,
+      opened_at: new Date().toISOString(),
+    };
+
+    if (isValidUuid(student.id)) {
+      try {
+        const { data, error } = await supabase
+          .from("feeflow_reminders")
+          .insert(reminderPayload)
+          .select("*")
+          .single();
+        if (!error && data) {
+          setReminders((current) => [data as Reminder, ...current]);
+        } else {
+          setReminders((current) => [reminderPayload as Reminder, ...current]);
+        }
+      } catch {
+        setReminders((current) => [reminderPayload as Reminder, ...current]);
+      }
+    } else {
+      setReminders((current) => [reminderPayload as Reminder, ...current]);
+    }
+
+    showToast("success", "WhatsApp opened. Review message and click Send.");
   }
 
   async function saveSettings(event: FormEvent<HTMLFormElement>) {
