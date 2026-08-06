@@ -440,7 +440,10 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
       setTeacherCustomSubjects(subjectsResult.data.map((s: { subject_name: string }) => s.subject_name));
     }
 
-    // Subscription status update & popup persistence fix
+    // Subscription status update & local storage cache persistence
+    const cachedPlan = typeof window !== "undefined" ? localStorage.getItem(cacheKey("plan", userId)) : null;
+    const cachedExpiry = typeof window !== "undefined" ? localStorage.getItem(cacheKey("expiry", userId)) : null;
+
     if (subResult.data) {
       const sub = subResult.data;
       const now = new Date();
@@ -448,7 +451,7 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
       const isExpired = expiryDate <= now;
 
       if (sub.subscription_status === "active" && !isExpired) {
-        setActivePlan(sub.plan);
+        setActivePlan(sub.plan as PlanName);
         setSubscriptionExpiry(sub.expiry_date);
         setPricingModalOpen(false);
         localStorage.setItem(cacheKey("plan", userId), sub.plan);
@@ -460,16 +463,44 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
             .update({ subscription_status: "expired", updated_at: now.toISOString() })
             .eq("id", sub.id);
         }
-        setActivePlan("Free");
-        setSubscriptionExpiry(null);
-        localStorage.removeItem(cacheKey("plan", userId));
-        localStorage.removeItem(cacheKey("expiry", userId));
-        setPricingModalOpen(isExpired);
+
+        if (cachedPlan && (cachedPlan === "1_month_trial" || cachedPlan === "trial" || cachedPlan === "pro_monthly" || cachedPlan === "pro_yearly" || cachedPlan === "Pro")) {
+          const isCachedNotExpired = !cachedExpiry || new Date(cachedExpiry) > new Date();
+          if (isCachedNotExpired) {
+            setActivePlan(cachedPlan as PlanName);
+            setSubscriptionExpiry(cachedExpiry);
+            setPricingModalOpen(false);
+          } else {
+            setActivePlan("Free");
+            setSubscriptionExpiry(null);
+            setPricingModalOpen(true);
+          }
+        } else {
+          setActivePlan("Free");
+          setSubscriptionExpiry(null);
+          setPricingModalOpen(isExpired);
+        }
       }
     } else {
-      if (initialPlan === "1_month_trial" || initialPlan === "trial" || initialPlan === "Pro") {
-        setActivePlan(initialPlan);
-        setPricingModalOpen(false);
+      const targetPlan = (cachedPlan || initialPlan) as PlanName;
+      if (
+        targetPlan === "1_month_trial" ||
+        targetPlan === "trial" ||
+        targetPlan === "pro_monthly" ||
+        targetPlan === "pro_yearly" ||
+        targetPlan === "Pro" ||
+        targetPlan === "Enterprise"
+      ) {
+        const isCachedNotExpired = !cachedExpiry || new Date(cachedExpiry) > new Date();
+        if (isCachedNotExpired) {
+          setActivePlan(targetPlan);
+          setSubscriptionExpiry(cachedExpiry || null);
+          setPricingModalOpen(false);
+          localStorage.setItem(cacheKey("plan", userId), targetPlan);
+        } else {
+          setActivePlan("Free");
+          setPricingModalOpen(false);
+        }
       } else {
         setActivePlan("Free");
         setPricingModalOpen(false);
