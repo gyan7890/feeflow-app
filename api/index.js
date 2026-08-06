@@ -1,10 +1,38 @@
-import rscHandler from "../dist/server/index.js";
+import rscHandlerModule from "../dist/server/index.js";
+
+function getHandler(mod) {
+  if (typeof mod === "function") return mod;
+  if (mod && typeof mod.default === "function") return mod.default;
+  if (mod && typeof mod.fetch === "function") return mod.fetch.bind(mod);
+  if (mod && mod.default && typeof mod.default.fetch === "function") return mod.default.fetch.bind(mod.default);
+  return null;
+}
+
+const rscHandler = getHandler(rscHandlerModule);
 
 export default async function handler(req, res) {
   try {
+    if (!rscHandler) {
+      throw new Error("Failed to resolve RSC handler function from dist/server/index.js");
+    }
+
     const protocol = req.headers["x-forwarded-proto"] || "https";
     const host = req.headers["host"] || "localhost";
-    const url = new URL(req.url, `${protocol}://${host}`);
+    
+    // On Vercel rewrites to /api/index, req.url may be "/api/index".
+    // Retrieve the original requested path from Vercel headers if present.
+    let reqPath = req.url || "/";
+    if (reqPath === "/api/index" || reqPath.startsWith("/api/index?") || reqPath.startsWith("/api/index/")) {
+      const originalPath =
+        req.headers["x-invoke-path"] ||
+        req.headers["x-matched-path"] ||
+        req.headers["x-original-url"] ||
+        req.headers["x-rewrite-url"] ||
+        "/";
+      reqPath = originalPath;
+    }
+
+    const url = new URL(reqPath, `${protocol}://${host}`);
 
     const headers = new Headers();
     for (const [key, val] of Object.entries(req.headers)) {
@@ -41,9 +69,29 @@ export default async function handler(req, res) {
     }
 
     res.statusCode = response.status;
+
+    // Handle Set-Cookie headers properly using getSetCookie if available
+    const setCookies = typeof response.headers.getSetCookie === "function" ? response.headers.getSetCookie() : [];
+    if (setCookies.length > 0) {
+      if (typeof res.appendHeader === "function") {
+        for (const cookie of setCookies) {
+          res.appendHeader("set-cookie", cookie);
+        }
+      } else {
+        res.setHeader("set-cookie", setCookies);
+      }
+    }
+
     response.headers.forEach((value, key) => {
-      if (key.toLowerCase() === "set-cookie") {
-        res.appendHeader(key, value);
+      const lowerKey = key.toLowerCase();
+      if (lowerKey === "set-cookie") {
+        if (setCookies.length === 0) {
+          if (typeof res.appendHeader === "function") {
+            res.appendHeader(key, value);
+          } else {
+            res.setHeader(key, value);
+          }
+        }
       } else {
         res.setHeader(key, value);
       }
@@ -54,7 +102,7 @@ export default async function handler(req, res) {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        res.write(value);
+        res.write(Buffer.from(value));
       }
     }
     res.end();
@@ -64,3 +112,4 @@ export default async function handler(req, res) {
     res.end("Internal Server Error");
   }
 }
+
