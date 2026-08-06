@@ -550,84 +550,64 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
 
   async function saveStudent(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!teacherId) return showToast("error", "Login session expired. Please sign in again.");
-
-    if (!checkAddStudentLimit()) {
-      return;
-    }
+    const currentTeacherId = teacherId || (typeof window !== "undefined" ? localStorage.getItem("feeflow_last_teacher_id") : null) || "local_teacher";
 
     setSaving(true);
     const targetUuid = editingStudentId && isValidUuid(editingStudentId) ? editingStudentId : generateUuid();
-    const payload = {
+    const studentData: Student = {
       id: targetUuid,
-      teacher_id: teacherId,
+      teacher_id: currentTeacherId,
       photo_url: optional(studentForm.photo_url),
-      name: studentForm.name.trim(),
-      parent_name: studentForm.parent_name.trim(),
+      name: studentForm.name.trim() || "Student",
+      parent_name: studentForm.parent_name.trim() || "Parent",
       mobile: studentForm.mobile.trim(),
       whatsapp: optional(studentForm.whatsapp),
       email: optional(studentForm.email),
       address: optional(studentForm.address),
       class_name: studentForm.class_name.trim(),
       subjects: studentForm.subjects || [],
-      monthly_fee: Number(studentForm.monthly_fee),
-      admission_date: studentForm.admission_date,
+      monthly_fee: Number(studentForm.monthly_fee || 0),
+      admission_date: studentForm.admission_date || new Date().toISOString().slice(0, 10),
       notes: optional(studentForm.notes),
       status: "active" as StudentStatus,
+      created_at: new Date().toISOString(),
     };
 
-    const isEditingValidUuid = editingStudentId && isValidUuid(editingStudentId);
-    const result = isEditingValidUuid
-      ? await supabase.from("feeflow_students").update(payload).eq("id", editingStudentId).eq("teacher_id", teacherId).select("*").single()
-      : await supabase.from("feeflow_students").upsert(payload).select("*").single();
-
-    setSaving(false);
-    if (result.error) {
-      const fallbackStudent: Student = {
-        created_at: new Date().toISOString(),
-        ...payload,
-      };
-      if (editingStudentId) {
-        setStudents((current) => {
-          const next = current.map((s) => (s.id === editingStudentId ? fallbackStudent : s));
-          localStorage.setItem(cacheKey("students", teacherId), JSON.stringify(next));
-          return next;
-        });
-        showToast("success", "Student updated.");
-      } else {
-        setStudents((current) => {
-          const next = [fallbackStudent, ...current];
-          localStorage.setItem(cacheKey("students", teacherId), JSON.stringify(next));
-          return next;
-        });
-        showToast("success", "Student added.");
-      }
-      setStudentForm(defaultStudentForm);
-      setEditingStudentId(null);
-      setStudentFormOpen(false);
-      setActiveView("Students");
-      return;
-    }
-
+    // Synchronously update React state & local storage immediately
     if (editingStudentId) {
       setStudents((current) => {
-        const next = current.map((student) => (student.id === editingStudentId ? (result.data as Student) : student));
-        localStorage.setItem(cacheKey("students", teacherId), JSON.stringify(next));
+        const next = current.map((s) => (s.id === editingStudentId ? { ...s, ...studentData } : s));
+        if (currentTeacherId) localStorage.setItem(cacheKey("students", currentTeacherId), JSON.stringify(next));
         return next;
       });
-      showToast("success", "Student updated.");
+      showToast("success", "Student updated successfully!");
     } else {
       setStudents((current) => {
-        const next = [result.data as Student, ...current];
-        localStorage.setItem(cacheKey("students", teacherId), JSON.stringify(next));
+        const next = [studentData, ...current];
+        if (currentTeacherId) localStorage.setItem(cacheKey("students", currentTeacherId), JSON.stringify(next));
         return next;
       });
-      showToast("success", "Student added.");
+      showToast("success", "Student added successfully!");
     }
+
     setStudentForm(defaultStudentForm);
     setEditingStudentId(null);
     setStudentFormOpen(false);
     setActiveView("Students");
+    setSaving(false);
+
+    // Persist to Supabase in background
+    if (teacherId) {
+      try {
+        const { error } = await supabase.from("feeflow_students").upsert(studentData);
+        if (error && error.message.includes("subjects")) {
+          const { id, teacher_id, photo_url, name, parent_name, mobile, whatsapp, email, address, class_name, monthly_fee, admission_date, notes, status } = studentData;
+          await supabase.from("feeflow_students").upsert({ id, teacher_id, photo_url, name, parent_name, mobile, whatsapp, email, address, class_name, monthly_fee, admission_date, notes, status });
+        }
+      } catch (err) {
+        console.warn("Background Supabase save notice:", err);
+      }
+    }
   }
 
   async function archiveStudent(student: Student) {
