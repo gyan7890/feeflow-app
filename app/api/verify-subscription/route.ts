@@ -40,6 +40,7 @@ export async function POST(request: Request) {
     return Response.json({ ok: false, error: "Teacher ID is required for verification." }, { status: 400 });
   }
 
+  const authHeader = request.headers.get("authorization");
   const config = getSupabaseConfig();
   if ("error" in config) {
     return Response.json({ ok: false, error: config.error }, { status: 500 });
@@ -48,6 +49,7 @@ export async function POST(request: Request) {
   try {
     const supabase = createClient(config.url, config.key, {
       auth: { persistSession: false },
+      global: authHeader ? { headers: { Authorization: authHeader } } : undefined,
     });
 
     const now = new Date();
@@ -77,12 +79,17 @@ export async function POST(request: Request) {
     try {
       const { data, error } = await supabase
         .from("feeflow_subscriptions")
-        .insert(subscriptionRecord)
+        .upsert(subscriptionRecord, { onConflict: "id" })
         .select("*")
-        .single();
-      if (!error) subData = data;
-    } catch {
-      // Memory fallback if DB insert fails
+        .maybeSingle();
+
+      if (!error && data) {
+        subData = data;
+      } else if (error) {
+        console.warn("feeflow_subscriptions upsert warning:", error.message);
+      }
+    } catch (err) {
+      console.warn("DB exception in subscription save:", err);
     }
 
     return Response.json(

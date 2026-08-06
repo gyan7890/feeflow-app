@@ -5,8 +5,10 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowLeft,
   Bell,
+  BookOpen,
   CalendarDays,
   Camera,
+  Check,
   CheckCircle2,
   CreditCard,
   Crown,
@@ -40,11 +42,12 @@ import {
   X,
   Zap,
 } from "lucide-react";
+import { ManageSubjectsView } from "./components/manage-subjects-view";
 import { PricingModal } from "./components/pricing-modal";
 import { supabase } from "./lib/supabase";
 
 type PlanName = "Free" | "Basic" | "Pro" | "Enterprise" | "pro_monthly" | "pro_yearly" | "1_month_trial" | "trial";
-type ViewName = "Dashboard" | "Students" | "Fee Collection" | "Payments" | "Pending Fees" | "Reports" | "Settings";
+type ViewName = "Dashboard" | "Students" | "Subjects" | "Fee Collection" | "Payments" | "Pending Fees" | "Reports" | "Settings";
 type StudentStatus = "active" | "archived";
 type PaymentStatus = "paid" | "pending" | "partial" | "overdue";
 type PaymentKind = "monthly" | "admission" | "extra" | "advance";
@@ -68,6 +71,7 @@ type Student = {
   email: string | null;
   address: string | null;
   class_name: string;
+  subjects?: string[];
   monthly_fee: number;
   admission_date: string;
   status: StudentStatus;
@@ -129,6 +133,7 @@ type StudentFormState = {
   email: string;
   address: string;
   class_name: string;
+  subjects: string[];
   monthly_fee: string;
   admission_date: string;
   notes: string;
@@ -155,6 +160,7 @@ const defaultStudentForm: StudentFormState = {
   email: "",
   address: "",
   class_name: "",
+  subjects: [],
   monthly_fee: "",
   admission_date: new Date().toISOString().slice(0, 10),
   notes: "",
@@ -246,6 +252,16 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
   });
 
   const [pricingModalOpen, setPricingModalOpen] = useState(false);
+  const [teacherCustomSubjects, setTeacherCustomSubjects] = useState<string[]>([
+    "Physics",
+    "Chemistry",
+    "Biology",
+    "Mathematics",
+    "English",
+    "Hindi",
+    "Coding",
+    "Accounts",
+  ]);
 
   const isProActive = useMemo(() => {
     if (!subscriptionExpiry) {
@@ -307,9 +323,7 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
   const pendingByStudentId = useMemo(() => new Map(pendingRows.map((row) => [row.student.id, row.pending])), [pendingRows]);
 
   const loadWorkspace = useCallback(async () => {
-    if (students.length === 0 && payments.length === 0) {
-      setLoading(true);
-    }
+    setLoading(true);
     setSetupError("");
 
     const { data: authData, error: authError } = await supabase.auth.getUser();
@@ -326,12 +340,13 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
     }
 
     // Parallel high-performance queries
-    const [studentResult, paymentResult, reminderResult, settingsResult, subResult] = await Promise.all([
+    const [studentResult, paymentResult, reminderResult, settingsResult, subResult, subjectsResult] = await Promise.all([
       supabase.from("feeflow_students").select("*").eq("teacher_id", userId).order("created_at", { ascending: false }),
       supabase.from("feeflow_payments").select("*").eq("teacher_id", userId).order("paid_on", { ascending: false }),
       supabase.from("feeflow_reminders").select("*").eq("teacher_id", userId).order("created_at", { ascending: false }),
       supabase.from("feeflow_settings").select("*").eq("teacher_id", userId).maybeSingle(),
       supabase.from("feeflow_subscriptions").select("*").eq("teacher_id", userId).order("expiry_date", { ascending: false }).limit(1).maybeSingle(),
+      supabase.from("feeflow_subjects").select("subject_name").eq("teacher_id", userId).order("subject_name", { ascending: true }),
     ]);
 
     const firstError = studentResult.error ?? paymentResult.error ?? reminderResult.error ?? settingsResult.error;
@@ -360,8 +375,11 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
       setSettings(settingsResult.data as InstituteSettings);
       localStorage.setItem(cacheKey("settings", userId), JSON.stringify(settingsResult.data));
     }
+    if (subjectsResult.data && subjectsResult.data.length > 0) {
+      setTeacherCustomSubjects(subjectsResult.data.map((s: { subject_name: string }) => s.subject_name));
+    }
 
-    // Subscription status update
+    // Subscription status update & popup persistence fix
     if (subResult.data) {
       const sub = subResult.data;
       const now = new Date();
@@ -385,16 +403,20 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
         setSubscriptionExpiry(null);
         localStorage.removeItem(cacheKey("plan", userId));
         localStorage.removeItem(cacheKey("expiry", userId));
-        setPricingModalOpen(true);
+        setPricingModalOpen(isExpired);
       }
     } else {
-      setActivePlan("Free");
-      setSubscriptionExpiry(null);
-      setPricingModalOpen(true);
+      if (initialPlan === "1_month_trial" || initialPlan === "trial" || initialPlan === "Pro") {
+        setActivePlan(initialPlan);
+        setPricingModalOpen(false);
+      } else {
+        setActivePlan("Free");
+        setPricingModalOpen(false);
+      }
     }
 
     setLoading(false);
-  }, [onSignOut, students.length, payments.length]);
+  }, [onSignOut, initialPlan]);
 
   useEffect(() => {
     void Promise.resolve().then(loadWorkspace);
@@ -451,6 +473,7 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
       email: optional(studentForm.email),
       address: optional(studentForm.address),
       class_name: studentForm.class_name.trim(),
+      subjects: studentForm.subjects || [],
       monthly_fee: Number(studentForm.monthly_fee),
       admission_date: studentForm.admission_date,
       notes: optional(studentForm.notes),
@@ -596,6 +619,7 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
       email: student.email ?? "",
       address: student.address ?? "",
       class_name: student.class_name,
+      subjects: student.subjects ?? [],
       monthly_fee: String(student.monthly_fee),
       admission_date: student.admission_date,
       notes: student.notes ?? "",
@@ -687,49 +711,49 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
               </div>
 
               {/* Action Buttons: Subscription Badge, Notifications & Settings */}
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                 {activePlan === "1_month_trial" || activePlan === "trial" ? (
-                  <span className="flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-[0.68rem] font-black text-emerald-700 border border-emerald-200 shadow-xs">
-                    <Gift size={13} /> 1-Month Trial Active
+                  <span className="flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-1 text-[0.62rem] sm:text-[0.68rem] font-black text-emerald-700 border border-emerald-200 shadow-xs">
+                    <Gift size={12} /> Trial
                   </span>
                 ) : isProActive ? (
-                  <span className="flex items-center gap-1 rounded-full bg-indigo-50 px-2.5 py-1 text-[0.68rem] font-black text-indigo-700 border border-indigo-200 shadow-xs">
-                    <Crown size={13} /> Pro Active
+                  <span className="flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-1 text-[0.62rem] sm:text-[0.68rem] font-black text-indigo-700 border border-indigo-200 shadow-xs">
+                    <Crown size={12} /> Pro
                   </span>
                 ) : (
                   <button
                     onClick={() => setPricingModalOpen(true)}
-                    className="flex items-center gap-1 rounded-full bg-gradient-to-r from-indigo-600 to-purple-600 px-3 py-1.5 text-xs font-black text-white shadow-xs transition active:scale-95"
+                    className="flex items-center gap-1 rounded-full bg-gradient-to-r from-indigo-600 to-purple-600 px-2.5 py-1 text-xs font-black text-white shadow-xs transition active:scale-95 cursor-pointer"
                   >
-                    <Crown size={14} /> Select Plan
+                    <Crown size={13} /> Plan
                   </button>
                 )}
 
                 <button
                   onClick={() => setActiveView("PendingFees")}
-                  className="relative grid size-11 place-items-center rounded-full bg-slate-100/80 text-slate-700 hover:bg-slate-200/80 border border-slate-200/60 transition active:scale-95"
+                  className="relative grid size-9 sm:size-11 place-items-center rounded-full bg-slate-100/80 text-slate-700 hover:bg-slate-200/80 border border-slate-200/60 transition active:scale-95 cursor-pointer"
                   aria-label="Notifications"
                 >
-                  <Bell size={20} className="stroke-[1.8]" />
+                  <Bell size={18} className="stroke-[1.8]" />
                   {reminderCount > 0 && (
-                    <span className="absolute right-2.5 top-2.5 size-2 rounded-full bg-rose-500 ring-2 ring-white" />
+                    <span className="absolute right-2 top-2 size-2 rounded-full bg-rose-500 ring-2 ring-white" />
                   )}
                 </button>
 
                 <button
                   onClick={() => setActiveView("Settings")}
-                  className="grid size-11 place-items-center rounded-full bg-slate-100/80 text-slate-700 hover:bg-slate-200/80 border border-slate-200/60 transition active:scale-95"
+                  className="grid size-9 sm:size-11 place-items-center rounded-full bg-slate-100/80 text-slate-700 hover:bg-slate-200/80 border border-slate-200/60 transition active:scale-95 cursor-pointer"
                   aria-label="Settings"
                 >
-                  <Settings size={20} className="stroke-[1.8]" />
+                  <Settings size={18} className="stroke-[1.8]" />
                 </button>
 
                 <button
                   onClick={onSignOut}
-                  className="grid size-11 place-items-center rounded-full bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-100 transition active:scale-95"
+                  className="grid size-9 sm:size-11 place-items-center rounded-full bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-100 transition active:scale-95 cursor-pointer"
                   aria-label="Logout"
                 >
-                  <LogOut size={19} className="stroke-[1.8]" />
+                  <LogOut size={18} className="stroke-[1.8]" />
                 </button>
               </div>
             </div>
@@ -850,6 +874,13 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
                       saving={saving}
                       showToast={showToast}
                       teacherId={teacherId}
+                      customSubjectsList={teacherCustomSubjects}
+                    />
+                  )}
+                  {activeView === "Subjects" && (
+                    <ManageSubjectsView
+                      teacherId={teacherId}
+                      onSubjectsUpdated={(updatedList) => setTeacherCustomSubjects(updatedList)}
                     />
                   )}
                   {activeView === "Fee Collection" && (
@@ -896,6 +927,12 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
               setSubscriptionExpiry(expiry);
             }
             setPricingModalOpen(false);
+            if (teacherId) {
+              localStorage.setItem(cacheKey("plan", teacherId), plan);
+              if (expiry) {
+                localStorage.setItem(cacheKey("expiry", teacherId), expiry);
+              }
+            }
             showToast("success", plan === "1_month_trial" || plan === "trial" ? "30-Day Free Pro Trial activated! All features unlocked." : `Subscription active (${plan})! All features unlocked.`);
           }}
         />
@@ -945,6 +982,7 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
               {([
                 ["Dashboard", Home, "Home"],
                 ["Students", Users, "Students"],
+                ["Subjects", BookOpen, "Subjects"],
                 ["Fee Collection", WalletCards, "Fees"],
                 ["Reports", TrendingUp, "Reports"],
                 ["Settings", Settings, "Settings"],
@@ -954,7 +992,7 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
                   <button
                     key={item}
                     onClick={() => setActiveView(item)}
-                    className={`relative flex flex-1 flex-col items-center justify-center py-2 rounded-2xl text-[0.66rem] font-bold transition-all duration-200 ${
+                    className={`relative flex flex-1 flex-col items-center justify-center py-1.5 px-0.5 rounded-2xl text-[0.6rem] sm:text-[0.66rem] font-bold transition-all duration-200 cursor-pointer ${
                       isActive ? "text-white" : "text-slate-500 hover:text-slate-900"
                     }`}
                   >
@@ -965,9 +1003,9 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
                         transition={{ type: "spring", stiffness: 400, damping: 30 }}
                       />
                     )}
-                    <span className="relative z-10 flex flex-col items-center gap-1">
-                      <Icon size={18} className={isActive ? "stroke-[2.2] text-white" : "stroke-[1.8]"} />
-                      <span>{navLabel}</span>
+                    <span className="relative z-10 flex flex-col items-center gap-0.5">
+                      <Icon className={`size-4 sm:size-[18px] ${isActive ? "stroke-[2.2] text-white" : "stroke-[1.8]"}`} />
+                      <span className="truncate max-w-full leading-tight">{navLabel}</span>
                     </span>
                   </button>
                 );
@@ -1131,6 +1169,7 @@ function StudentsView({
   saving,
   showToast,
   teacherId,
+  customSubjectsList = [],
 }: {
   students: Student[];
   pendingByStudentId: Map<string, number>;
@@ -1148,6 +1187,7 @@ function StudentsView({
   saving: boolean;
   showToast: (tone: "success" | "error", message: string) => void;
   teacherId: string;
+  customSubjectsList?: string[];
 }) {
   return (
     <div className="space-y-4">
@@ -1366,6 +1406,47 @@ function StudentsView({
                     />
                   </div>
 
+                  {/* Multi-Select Custom Subjects Grid */}
+                  <div>
+                    <p className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 flex items-center gap-1">
+                      <BookOpen size={14} className="text-indigo-600" /> Select Subjects Taught
+                    </p>
+                    {customSubjectsList.length === 0 ? (
+                      <p className="text-xs text-slate-400 font-semibold italic p-3 rounded-2xl bg-slate-50 border border-slate-200/80">
+                        No custom subjects created yet. Add subjects from the Subjects tab.
+                      </p>
+                    ) : (
+                      <div className="flex flex-wrap gap-2 p-3 rounded-2xl bg-slate-50 border border-slate-200/80 max-h-40 overflow-y-auto no-scrollbar">
+                        {customSubjectsList.map((subName) => {
+                          const isSelected = form.subjects?.includes(subName);
+                          return (
+                            <button
+                              type="button"
+                              key={subName}
+                              onClick={() => {
+                                const current = form.subjects || [];
+                                const updated = isSelected
+                                  ? current.filter((s) => s !== subName)
+                                  : [...current, subName];
+                                setForm((prev) => ({ ...prev, subjects: updated }));
+                              }}
+                              className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold transition cursor-pointer ${
+                                isSelected
+                                  ? "bg-indigo-600 text-white shadow-xs ring-2 ring-indigo-600/20"
+                                  : "bg-white text-slate-700 hover:bg-slate-100 border border-slate-200"
+                              }`}
+                            >
+                              <span className={`size-3.5 rounded-md border flex items-center justify-center ${isSelected ? "bg-white border-white text-indigo-600" : "border-slate-300"}`}>
+                                {isSelected && <Check size={10} className="stroke-[3]" />}
+                              </span>
+                              <span>{subName}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
                   <M3Input
                     label="Admission Date"
                     type="date"
@@ -1519,6 +1600,16 @@ function StudentCard({
         <MiniStat label="Fee" value={formatCurrency(student.monthly_fee)} />
         <MiniStat label="Pending" value={formatCurrency(pending)} danger={pending > 0} />
       </div>
+
+      {student.subjects && student.subjects.length > 0 && (
+        <div className="mt-2.5 flex flex-wrap gap-1">
+          {student.subjects.map((sub) => (
+            <span key={sub} className="inline-flex items-center rounded-full bg-indigo-50 px-2.5 py-0.5 text-[0.62rem] font-bold text-indigo-700 border border-indigo-100">
+              {sub}
+            </span>
+          ))}
+        </div>
+      )}
 
       <div className="mt-3 flex items-center justify-end gap-2 border-t border-slate-200/60 pt-2.5">
         <button

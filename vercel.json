@@ -2,6 +2,11 @@
   "version": 2,
   "buildCommand": "npm run build",
   "outputDirectory": "dist/client",
+  "functions": {
+    "api/index.js": {
+      "includeFiles": "dist/server/**"
+    }
+  },
   "rewrites": [
     {
       "source": "/((?!_next/|favicon\\.svg|globe\\.svg|file\\.svg|window\\.svg|manifest\\.webmanifest|sw\\.js|icons/|.*\\.(?:png|jpg|jpeg|gif|svg|ico|css|js|woff2?)).*)",

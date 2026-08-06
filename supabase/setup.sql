@@ -97,11 +97,55 @@ create table if not exists public.feeflow_subscriptions (
   updated_at timestamptz not null default now()
 );
 
+alter table public.feeflow_students add column if not exists subjects text[] not null default '{}';
+
+create table if not exists public.teacher_profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  name text,
+  email text,
+  photo_url text,
+  phone text not null,
+  institute_name text not null,
+  address text not null,
+  city text,
+  state text,
+  pincode text,
+  profile_completed boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.feeflow_subjects (
+  id uuid primary key default gen_random_uuid(),
+  teacher_id uuid not null references auth.users(id) on delete cascade,
+  subject_name text not null,
+  created_at timestamptz not null default now(),
+  unique (teacher_id, subject_name)
+);
+
 alter table public.feeflow_students enable row level security;
 alter table public.feeflow_payments enable row level security;
 alter table public.feeflow_reminders enable row level security;
 alter table public.feeflow_settings enable row level security;
 alter table public.feeflow_subscriptions enable row level security;
+alter table public.teacher_profiles enable row level security;
+alter table public.feeflow_subjects enable row level security;
+
+drop policy if exists "Teachers manage own profile" on public.teacher_profiles;
+create policy "Teachers manage own profile"
+on public.teacher_profiles
+for all
+to authenticated
+using (id = auth.uid())
+with check (id = auth.uid());
+
+drop policy if exists "Teachers manage own subjects" on public.feeflow_subjects;
+create policy "Teachers manage own subjects"
+on public.feeflow_subjects
+for all
+to authenticated
+using (teacher_id = auth.uid())
+with check (teacher_id = auth.uid());
 
 drop policy if exists "Teachers manage own students" on public.feeflow_students;
 create policy "Teachers manage own students"
@@ -154,3 +198,7 @@ on public.feeflow_reminders (teacher_id, created_at desc);
 
 create index if not exists feeflow_subscriptions_teacher_date_idx
 on public.feeflow_subscriptions (teacher_id, expiry_date desc);
+
+create index if not exists feeflow_subjects_teacher_idx
+on public.feeflow_subjects (teacher_id, subject_name);
+

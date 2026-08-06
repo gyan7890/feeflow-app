@@ -1,4 +1,6 @@
-import rscHandlerModule from "../dist/server/index.js";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 function getHandler(mod) {
   if (typeof mod === "function") return mod;
@@ -8,10 +10,45 @@ function getHandler(mod) {
   return null;
 }
 
-const rscHandler = getHandler(rscHandlerModule);
+let cachedRscHandler = null;
+
+async function getRscHandler() {
+  if (cachedRscHandler) return cachedRscHandler;
+
+  const candidatePaths = [
+    path.resolve(process.cwd(), "dist/server/index.js"),
+    path.resolve(process.cwd(), "../dist/server/index.js"),
+    path.resolve(process.cwd(), ".next/server/index.js"),
+  ];
+
+  for (const candidatePath of candidatePaths) {
+    if (fs.existsSync(candidatePath)) {
+      try {
+        const mod = await import(pathToFileURL(candidatePath).href);
+        const handlerFn = getHandler(mod);
+        if (handlerFn) {
+          cachedRscHandler = handlerFn;
+          return cachedRscHandler;
+        }
+      } catch (err) {
+        console.warn("Failed loading RSC handler from:", candidatePath, err);
+      }
+    }
+  }
+
+  try {
+    const mod = await import("../dist/server/index.js");
+    cachedRscHandler = getHandler(mod);
+    return cachedRscHandler;
+  } catch (err) {
+    console.error("Static relative import fallback failed:", err);
+    return null;
+  }
+}
 
 export default async function handler(req, res) {
   try {
+    const rscHandler = await getRscHandler();
     if (!rscHandler) {
       throw new Error("Failed to resolve RSC handler function from dist/server/index.js");
     }

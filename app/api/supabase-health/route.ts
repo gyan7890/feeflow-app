@@ -7,6 +7,8 @@ const requiredTables = [
   { name: "feeflow_payments", select: "id" },
   { name: "feeflow_reminders", select: "id" },
   { name: "feeflow_settings", select: "teacher_id" },
+  { name: "teacher_profiles", select: "id" },
+  { name: "feeflow_subjects", select: "id" },
   { name: "leads", select: "id" },
 ];
 

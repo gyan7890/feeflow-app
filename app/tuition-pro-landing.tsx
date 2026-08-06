@@ -5,6 +5,7 @@ import type { User } from "@supabase/supabase-js";
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowRight, Heart, LockKeyhole, Mail, ShieldCheck, X } from "lucide-react";
 import { supabase } from "./lib/supabase";
+import { CompleteProfileScreen } from "./components/complete-profile-screen";
 import { TeacherApp } from "./teacher-app";
 
 type PlanName = "Free" | "Basic" | "Pro" | "Enterprise" | "1_month_trial";
@@ -18,6 +19,7 @@ export function FeeFlowLanding() {
   const [authMessage, setAuthMessage] = useState("");
   const [teacher, setTeacher] = useState<User | null>(null);
   const [teacherEmail, setTeacherEmail] = useState("");
+  const [isProfileCompleted, setIsProfileCompleted] = useState<boolean | null>(null);
   const [resetEmail, setResetEmail] = useState("");
   const [showResetSheet, setShowResetSheet] = useState(false);
   const [emailCooldownUntil, setEmailCooldownUntil] = useState(0);
@@ -32,6 +34,33 @@ export function FeeFlowLanding() {
     }
   }
 
+  async function checkTeacherProfile(user: User) {
+    if (user.user_metadata?.profile_completed === true) {
+      setIsProfileCompleted(true);
+      return;
+    }
+
+    try {
+      const { data } = await supabase
+        .from("teacher_profiles")
+        .select("profile_completed, phone, institute_name, address")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (data && data.profile_completed && data.institute_name && data.phone && data.address) {
+        setIsProfileCompleted(true);
+      } else {
+        setIsProfileCompleted(false);
+      }
+    } catch {
+      if (user.user_metadata?.institute_name && user.user_metadata?.phone) {
+        setIsProfileCompleted(true);
+      } else {
+        setIsProfileCompleted(false);
+      }
+    }
+  }
+
   useEffect(() => {
     let mounted = true;
 
@@ -42,15 +71,27 @@ export function FeeFlowLanding() {
 
     supabase.auth.getSession().then(({ data }) => {
       if (!mounted) return;
-      setTeacher(data.session?.user ?? null);
-      setTeacherEmail(data.session?.user.email ?? "");
-      syncSelectedPlan(data.session?.user);
+      const currentUser = data.session?.user ?? null;
+      setTeacher(currentUser);
+      setTeacherEmail(currentUser?.email ?? "");
+      syncSelectedPlan(currentUser ?? undefined);
+      if (currentUser) {
+        void checkTeacherProfile(currentUser);
+      } else {
+        setIsProfileCompleted(null);
+      }
     });
 
     const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-      setTeacher(session?.user ?? null);
-      setTeacherEmail(session?.user.email ?? "");
-      syncSelectedPlan(session?.user);
+      const currentUser = session?.user ?? null;
+      setTeacher(currentUser);
+      setTeacherEmail(currentUser?.email ?? "");
+      syncSelectedPlan(currentUser ?? undefined);
+      if (currentUser) {
+        void checkTeacherProfile(currentUser);
+      } else {
+        setIsProfileCompleted(null);
+      }
     });
 
     return () => {
@@ -201,8 +242,16 @@ export function FeeFlowLanding() {
       {showSplash ? (
         <SplashScreen key="splash-screen" />
       ) : teacher ? (
-        /* 2. AUTHENTICATED DASHBOARD */
-        <TeacherApp key="teacher-app" email={teacherEmail} plan={selectedPlan} onSignOut={signOutTeacher} />
+        isProfileCompleted === false ? (
+          <CompleteProfileScreen
+            key="complete-profile"
+            user={teacher}
+            onComplete={() => setIsProfileCompleted(true)}
+          />
+        ) : (
+          /* 2. AUTHENTICATED DASHBOARD */
+          <TeacherApp key="teacher-app" email={teacherEmail} plan={selectedPlan} onSignOut={signOutTeacher} />
+        )
       ) : (
         /* 3. LANDING / LOGIN SCREEN */
         <motion.main
