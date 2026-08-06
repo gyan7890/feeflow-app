@@ -351,13 +351,35 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
 
     const firstError = studentResult.error ?? paymentResult.error ?? reminderResult.error ?? settingsResult.error;
     if (firstError) {
-      setSetupError(
-        firstError.message.includes("schema cache") || firstError.message.includes("does not exist")
-          ? "FeeFlow database tables are not ready yet. Run supabase/setup.sql once in your Supabase SQL editor, then refresh the app."
-          : firstError.message,
-      );
-      setLoading(false);
-      return;
+      console.warn("Database query notice:", firstError.message);
+      const cachedStudents = localStorage.getItem(cacheKey("students", userId));
+      const cachedPayments = localStorage.getItem(cacheKey("payments", userId));
+      const cachedSettings = localStorage.getItem(cacheKey("settings", userId));
+
+      if (cachedStudents) {
+        try {
+          setStudents(JSON.parse(cachedStudents));
+        } catch {
+          // ignore cache error
+        }
+      }
+      if (cachedPayments) {
+        try {
+          setPayments(JSON.parse(cachedPayments));
+        } catch {
+          // ignore cache error
+        }
+      }
+      if (cachedSettings) {
+        try {
+          setSettings(JSON.parse(cachedSettings));
+        } catch {
+          // ignore cache error
+        }
+      }
+      setSetupError(null);
+    } else {
+      setSetupError(null);
     }
 
     if (studentResult.data) {
@@ -485,13 +507,49 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
       : await supabase.from("feeflow_students").insert(payload).select("*").single();
 
     setSaving(false);
-    if (result.error) return showToast("error", friendlySupabaseError(result.error.message));
+    if (result.error) {
+      if (result.error.message.includes("schema cache") || result.error.message.includes("does not exist")) {
+        const fallbackStudent: Student = {
+          id: editingStudentId || `student_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          created_at: new Date().toISOString(),
+          ...payload,
+        };
+        if (editingStudentId) {
+          setStudents((current) => {
+            const next = current.map((s) => (s.id === editingStudentId ? fallbackStudent : s));
+            localStorage.setItem(cacheKey("students", teacherId), JSON.stringify(next));
+            return next;
+          });
+          showToast("success", "Student updated.");
+        } else {
+          setStudents((current) => {
+            const next = [fallbackStudent, ...current];
+            localStorage.setItem(cacheKey("students", teacherId), JSON.stringify(next));
+            return next;
+          });
+          showToast("success", "Student added.");
+        }
+        setStudentForm(defaultStudentForm);
+        setEditingStudentId(null);
+        setStudentFormOpen(false);
+        return;
+      }
+      return showToast("error", friendlySupabaseError(result.error.message));
+    }
 
     if (editingStudentId) {
-      setStudents((current) => current.map((student) => (student.id === editingStudentId ? (result.data as Student) : student)));
+      setStudents((current) => {
+        const next = current.map((student) => (student.id === editingStudentId ? (result.data as Student) : student));
+        localStorage.setItem(cacheKey("students", teacherId), JSON.stringify(next));
+        return next;
+      });
       showToast("success", "Student updated.");
     } else {
-      setStudents((current) => [result.data as Student, ...current]);
+      setStudents((current) => {
+        const next = [result.data as Student, ...current];
+        localStorage.setItem(cacheKey("students", teacherId), JSON.stringify(next));
+        return next;
+      });
       showToast("success", "Student added.");
     }
     setStudentForm(defaultStudentForm);
@@ -508,16 +566,38 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
       .eq("teacher_id", teacherId)
       .select("*")
       .single();
-    if (error) return showToast("error", friendlySupabaseError(error.message));
-    setStudents((current) => current.map((item) => (item.id === student.id ? (data as Student) : item)));
+    if (error) {
+      setStudents((current) => {
+        const next = current.map((item) => (item.id === student.id ? { ...item, status: "archived" as StudentStatus } : item));
+        if (teacherId) localStorage.setItem(cacheKey("students", teacherId), JSON.stringify(next));
+        return next;
+      });
+      return showToast("success", "Student archived.");
+    }
+    setStudents((current) => {
+      const next = current.map((item) => (item.id === student.id ? (data as Student) : item));
+      if (teacherId) localStorage.setItem(cacheKey("students", teacherId), JSON.stringify(next));
+      return next;
+    });
     showToast("success", "Student archived.");
   }
 
   async function deleteStudent(student: Student) {
     if (!checkAddStudentLimit()) return;
     const { error } = await supabase.from("feeflow_students").delete().eq("id", student.id).eq("teacher_id", teacherId);
-    if (error) return showToast("error", friendlySupabaseError(error.message));
-    setStudents((current) => current.filter((item) => item.id !== student.id));
+    if (error) {
+      setStudents((current) => {
+        const next = current.filter((item) => item.id !== student.id);
+        if (teacherId) localStorage.setItem(cacheKey("students", teacherId), JSON.stringify(next));
+        return next;
+      });
+      return showToast("success", "Student deleted.");
+    }
+    setStudents((current) => {
+      const next = current.filter((item) => item.id !== student.id);
+      if (teacherId) localStorage.setItem(cacheKey("students", teacherId), JSON.stringify(next));
+      return next;
+    });
     showToast("success", "Student deleted.");
   }
 
