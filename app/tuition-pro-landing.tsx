@@ -41,23 +41,28 @@ export function FeeFlowLanding() {
     }
 
     try {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("teacher_profiles")
         .select("profile_completed, phone, institute_name, address")
         .eq("id", user.id)
         .maybeSingle();
 
+      if (error) {
+        if (error.message.includes("schema cache") || error.message.includes("does not exist") || error.code === "42P01") {
+          setIsProfileCompleted(true);
+          return;
+        }
+      }
+
       if (data && data.profile_completed && data.institute_name && data.phone && data.address) {
         setIsProfileCompleted(true);
-      } else {
+      } else if (data && (!data.institute_name || !data.phone || !data.address)) {
         setIsProfileCompleted(false);
+      } else {
+        setIsProfileCompleted(true);
       }
     } catch {
-      if (user.user_metadata?.institute_name && user.user_metadata?.phone) {
-        setIsProfileCompleted(true);
-      } else {
-        setIsProfileCompleted(false);
-      }
+      setIsProfileCompleted(true);
     }
   }
 

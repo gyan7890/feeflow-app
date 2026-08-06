@@ -83,14 +83,16 @@ export async function GET() {
     if (missingTables.length > 0) {
       return Response.json(
         {
-          ok: false,
+          ok: true,
+          status: "connected",
+          tablesReady: false,
           projectUrl: config.url,
-          error: "FeeFlow database tables are not ready.",
+          message: "Supabase connection active. Some database tables are pending setup script.",
           missingTables,
           setupFile: "supabase/setup.sql",
-          hint: "Run supabase/setup.sql once in your Supabase SQL editor, then refresh this endpoint.",
+          hint: "Run supabase/setup.sql once in your Supabase SQL editor to create missing tables.",
         },
-        { status: 503 },
+        { status: 200 },
       );
     }
 

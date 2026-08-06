@@ -86,6 +86,26 @@ export function ManageSubjectsView({ teacherId, onSubjectsUpdated }: ManageSubje
 
         if (error) {
           console.warn("Could not fetch subjects from DB:", error.message);
+          const cachedRaw = localStorage.getItem(`feeflow_custom_subjects_${teacherId}`);
+          if (cachedRaw) {
+            try {
+              const cachedNames: string[] = JSON.parse(cachedRaw);
+              const cachedItems: SubjectItem[] = cachedNames.map((name, idx) => ({
+                id: `cached-${idx}`,
+                teacher_id: teacherId,
+                subject_name: name,
+              }));
+              if (!ignore) {
+                setSubjects(cachedItems);
+                if (onSubjectsUpdatedRef.current) {
+                  onSubjectsUpdatedRef.current(cachedNames);
+                }
+              }
+              return;
+            } catch {
+              // Ignore cache parse error
+            }
+          }
         }
 
         if (!ignore) {
@@ -97,6 +117,24 @@ export function ManageSubjectsView({ teacherId, onSubjectsUpdated }: ManageSubje
         }
       } catch (err) {
         console.error("Error loading subjects:", err);
+        const cachedRaw = localStorage.getItem(`feeflow_custom_subjects_${teacherId}`);
+        if (cachedRaw && !ignore) {
+          try {
+            const cachedNames: string[] = JSON.parse(cachedRaw);
+            const cachedItems: SubjectItem[] = cachedNames.map((name, idx) => ({
+              id: `cached-${idx}`,
+              teacher_id: teacherId,
+              subject_name: name,
+            }));
+            setSubjects(cachedItems);
+            if (onSubjectsUpdatedRef.current) {
+              onSubjectsUpdatedRef.current(cachedNames);
+            }
+            return;
+          } catch {
+            // Ignore cache parse error
+          }
+        }
         if (!ignore) setSubjects([]);
       } finally {
         if (!ignore) setLoading(false);
