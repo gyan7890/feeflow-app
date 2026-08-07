@@ -45,6 +45,7 @@ import {
 import { ManageSubjectsView } from "./components/manage-subjects-view";
 import { PricingModal } from "./components/pricing-modal";
 import { supabase } from "./lib/supabase";
+import { openExternalAppUrl, initAndroidLinkInterceptor } from "./lib/android-native";
 
 export function generateUuid(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -514,6 +515,11 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
     void Promise.resolve().then(loadWorkspace);
   }, [loadWorkspace]);
 
+  useEffect(() => {
+    const cleanup = initAndroidLinkInterceptor();
+    return cleanup;
+  }, []);
+
   function checkAddStudentLimit() {
     if (!isProActive) {
       setPricingModalOpen(true);
@@ -741,26 +747,7 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
     }
 
     const waUrl = buildWhatsAppUrl(phone, message);
-
-    // Open WhatsApp via anchor click to prevent net::ERR_UNKNOWN_URL_SCHEME in Android WebView
-    try {
-      if (typeof document !== "undefined") {
-        const anchor = document.createElement("a");
-        anchor.href = waUrl;
-        anchor.target = "_blank";
-        anchor.rel = "noopener noreferrer";
-        document.body.appendChild(anchor);
-        anchor.click();
-        document.body.removeChild(anchor);
-      } else if (typeof window !== "undefined") {
-        const win = window.open(waUrl, "_blank", "noopener,noreferrer");
-        if (!win) window.location.href = waUrl;
-      }
-    } catch {
-      if (typeof window !== "undefined") {
-        window.location.href = waUrl;
-      }
-    }
+    openExternalAppUrl(waUrl);
 
     const reminderUuid = generateUuid();
     const studentUuid = isValidUuid(student.id) ? student.id : generateUuid();
@@ -1825,6 +1812,16 @@ function StudentCard({
       )}
 
       <div className="mt-3 flex items-center justify-end gap-2 border-t border-slate-200/60 pt-2.5">
+        <a
+          href={`tel:${student.mobile}`}
+          onClick={(e) => {
+            e.preventDefault();
+            openExternalAppUrl(`tel:${student.mobile}`);
+          }}
+          className="flex items-center gap-1 rounded-xl bg-blue-50 px-2.5 py-1.5 text-[0.68rem] font-bold text-blue-700 hover:bg-blue-100"
+        >
+          <Phone size={13} /> Call
+        </a>
         <button
           onClick={onEdit}
           className="flex items-center gap-1 rounded-xl bg-slate-200/80 px-2.5 py-1.5 text-[0.68rem] font-bold text-slate-700 hover:bg-slate-300"

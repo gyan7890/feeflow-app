@@ -5,6 +5,7 @@ import type { User } from "@supabase/supabase-js";
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowRight, Heart, LockKeyhole, Mail, ShieldCheck, X } from "lucide-react";
 import { supabase } from "./lib/supabase";
+import { getAppOrigin, initAndroidLinkInterceptor } from "./lib/android-native";
 import { CompleteProfileScreen } from "./components/complete-profile-screen";
 import { TeacherApp } from "./teacher-app";
 
@@ -107,9 +108,8 @@ export function FeeFlowLanding() {
   }, []);
 
   useEffect(() => {
-    if (typeof window !== "undefined" && (window.location.hash.includes("access_token=") || window.location.search.includes("code="))) {
-      window.history.replaceState(null, "", window.location.pathname);
-    }
+    const cleanup = initAndroidLinkInterceptor();
+    return cleanup;
   }, []);
 
   useEffect(() => {
@@ -130,9 +130,7 @@ export function FeeFlowLanding() {
     setAuthStatus("loading");
     setAuthMessage("");
 
-    const appOrigin = typeof window !== "undefined" && !window.location.origin.includes("localhost")
-      ? window.location.origin
-      : "https://iiiii-pi.vercel.app";
+    const appOrigin = getAppOrigin();
 
     try {
       const { error } = await supabase.auth.signInWithOAuth({
@@ -231,9 +229,7 @@ export function FeeFlowLanding() {
       return;
     }
 
-    const appOrigin = typeof window !== "undefined" && !window.location.origin.includes("localhost")
-      ? window.location.origin
-      : "https://iiiii-pi.vercel.app";
+    const appOrigin = getAppOrigin();
 
     setAuthStatus("loading");
     setAuthMessage("");
