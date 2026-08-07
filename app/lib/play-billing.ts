@@ -191,7 +191,73 @@ export async function activateOneMonthTrial(teacherId: string): Promise<Purchase
 }
 
 /**
- * Executes Google Play Billing purchase flow for selected subscription plan.
+ * Dynamically loads official Google Pay JS SDK script (https://pay.google.com/gp/p/js/pay.js)
+ */
+export function loadGooglePaySdkScript(): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (typeof window === "undefined") return resolve(false);
+    // @ts-expect-error Google Pay global object
+    if (window.google?.payments?.api?.PaymentsClient) return resolve(true);
+
+    const existingScript = document.getElementById("google-pay-sdk-script");
+    if (existingScript) return resolve(true);
+
+    const script = document.createElement("script");
+    script.id = "google-pay-sdk-script";
+    script.src = "https://pay.google.com/gp/p/js/pay.js";
+    script.async = true;
+    script.onload = () => {
+      resolve(true);
+    };
+    script.onerror = () => {
+      console.warn("Failed to load Google Pay SDK script.");
+      resolve(false);
+    };
+    document.head.appendChild(script);
+  });
+}
+
+/**
+ * Checks if Google Pay SDK is ready to pay in current browser environment.
+ */
+export async function checkGooglePaySdkReady(): Promise<boolean> {
+  try {
+    const loaded = await loadGooglePaySdkScript();
+    if (!loaded || typeof window === "undefined") return false;
+
+    // @ts-expect-error Google Pay PaymentsClient
+    if (window.google?.payments?.api?.PaymentsClient) {
+      // @ts-expect-error Google Pay PaymentsClient constructor
+      const paymentsClient = new window.google.payments.api.PaymentsClient({
+        environment: "TEST", // default sandbox test environment
+      });
+
+      const isReadyRequest = {
+        apiVersion: 2,
+        apiVersionMinor: 0,
+        allowedPaymentMethods: [
+          {
+            type: "CARD",
+            parameters: {
+              allowedAuthMethods: ["PAN_ONLY", "CRYPTOGRAM_3DS"],
+              allowedCardNetworks: ["AMEX", "DISCOVER", "INTERAC", "JCB", "MASTERCARD", "VISA"],
+            },
+          },
+        ],
+      };
+
+      const response = await paymentsClient.isReadyToPay(isReadyRequest);
+      return Boolean(response.result);
+    }
+    return false;
+  } catch (err) {
+    console.warn("Google Pay SDK readiness check warning:", err);
+    return false;
+  }
+}
+
+/**
+ * Executes Google Play Billing or Google Pay Web purchase flow for selected plan.
  */
 export async function launchPlayBillingPurchase(
   planId: SubscriptionPlanId,
@@ -206,7 +272,7 @@ export async function launchPlayBillingPurchase(
     return { status: "error", message: "Invalid subscription plan selected." };
   }
 
-  // Check if native Play Billing (Digital Goods API) is available in TWA environment
+  // 1. Check native Play Billing (Digital Goods API) for Android TWA App
   if (typeof window !== "undefined" && "getDigitalGoodsService" in window) {
     try {
       // @ts-expect-error Digital Goods API experimental web spec
@@ -231,7 +297,57 @@ export async function launchPlayBillingPurchase(
     }
   }
 
-  // Fallback for Google Play Console Internal Testing & Web Sandbox Mode
+  // 2. Check Google Pay Web SDK (pay.google.com)
+  const gpayReady = await checkGooglePaySdkReady();
+  if (gpayReady && typeof window !== "undefined") {
+    try {
+      // @ts-expect-error Google Pay PaymentsClient
+      const paymentsClient = new window.google.payments.api.PaymentsClient({
+        environment: "TEST",
+      });
+
+      const priceAmount = planId === "pro_yearly" ? "599.00" : "100.00";
+      const paymentDataRequest = {
+        apiVersion: 2,
+        apiVersionMinor: 0,
+        allowedPaymentMethods: [
+          {
+            type: "CARD",
+            parameters: {
+              allowedAuthMethods: ["PAN_ONLY", "CRYPTOGRAM_3DS"],
+              allowedCardNetworks: ["MASTERCARD", "VISA"],
+            },
+            tokenizationSpecification: {
+              type: "PAYMENT_GATEWAY",
+              parameters: {
+                gateway: "example",
+                gatewayMerchantId: "feeflow_merchant_id",
+              },
+            },
+          },
+        ],
+        merchantInfo: {
+          merchantName: "FeeFlow Pro",
+        },
+        transactionInfo: {
+          totalPriceStatus: "FINAL",
+          totalPrice: priceAmount,
+          currencyCode: "INR",
+          countryCode: "IN",
+        },
+      };
+
+      const paymentData = await paymentsClient.loadPaymentData(paymentDataRequest);
+      const token = paymentData.paymentMethodData?.tokenizationData?.token || `gpay_token_${Date.now()}`;
+      const orderId = `GPA.GPAY-${Date.now()}`;
+
+      return await verifySubscriptionWithBackend(teacherId, planId, token, orderId);
+    } catch (gpayErr) {
+      console.warn("Google Pay Web SDK load payment data cancelled or error:", gpayErr);
+    }
+  }
+
+  // 3. Fallback for Google Play Console Internal Testing & Web Sandbox Mode
   const mockToken = `play_token_${planId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const mockOrderId = `GPA.${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}`;
 
