@@ -742,11 +742,19 @@ export function TeacherApp({ email, plan: initialPlan, onSignOut }: TeacherAppPr
 
     const waUrl = buildWhatsAppUrl(phone, message);
 
-    // Open WhatsApp immediately so browser popup blockers don't block it
+    // Open WhatsApp via anchor click to prevent net::ERR_UNKNOWN_URL_SCHEME in Android WebView
     try {
-      const win = typeof window !== "undefined" ? window.open(waUrl, "_blank", "noopener,noreferrer") : null;
-      if (!win && typeof window !== "undefined") {
-        window.location.href = waUrl;
+      if (typeof document !== "undefined") {
+        const anchor = document.createElement("a");
+        anchor.href = waUrl;
+        anchor.target = "_blank";
+        anchor.rel = "noopener noreferrer";
+        document.body.appendChild(anchor);
+        anchor.click();
+        document.body.removeChild(anchor);
+      } else if (typeof window !== "undefined") {
+        const win = window.open(waUrl, "_blank", "noopener,noreferrer");
+        if (!win) window.location.href = waUrl;
       }
     } catch {
       if (typeof window !== "undefined") {
@@ -2397,7 +2405,7 @@ function normalizePhoneNumber(value: string) {
 }
 
 function buildWhatsAppUrl(phone: string, message: string) {
-  return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+  return `https://api.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(message)}`;
 }
 
 function downloadText(filename: string, text: string) {

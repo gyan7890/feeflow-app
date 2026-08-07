@@ -107,6 +107,12 @@ export function FeeFlowLanding() {
   }, []);
 
   useEffect(() => {
+    if (typeof window !== "undefined" && (window.location.hash.includes("access_token=") || window.location.search.includes("code="))) {
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+  }, []);
+
+  useEffect(() => {
     if (emailCooldownUntil <= clockNow) return;
 
     const timer = window.setInterval(() => {
@@ -124,11 +130,15 @@ export function FeeFlowLanding() {
     setAuthStatus("loading");
     setAuthMessage("");
 
+    const appOrigin = typeof window !== "undefined" && !window.location.origin.includes("localhost")
+      ? window.location.origin
+      : "https://iiiii-pi.vercel.app";
+
     try {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
-          redirectTo: typeof window !== "undefined" ? window.location.origin : undefined,
+          redirectTo: appOrigin,
         },
       });
 
@@ -157,6 +167,10 @@ export function FeeFlowLanding() {
       return;
     }
 
+    const appOrigin = typeof window !== "undefined" && !window.location.origin.includes("localhost")
+      ? window.location.origin
+      : "https://iiiii-pi.vercel.app";
+
     try {
       const result =
         authMode === "signup"
@@ -164,6 +178,7 @@ export function FeeFlowLanding() {
               email,
               password,
               options: {
+                emailRedirectTo: appOrigin,
                 data: {
                   full_name: fullName,
                   institute_name: institute,
@@ -216,9 +231,15 @@ export function FeeFlowLanding() {
       return;
     }
 
+    const appOrigin = typeof window !== "undefined" && !window.location.origin.includes("localhost")
+      ? window.location.origin
+      : "https://iiiii-pi.vercel.app";
+
     setAuthStatus("loading");
     setAuthMessage("");
-    const { error } = await supabase.auth.resetPasswordForEmail(email);
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: appOrigin,
+    });
     setAuthStatus(error ? "error" : "success");
     if (error && isEmailRateLimit(error.message)) {
       setEmailCooldownUntil(Date.now() + 60_000);
